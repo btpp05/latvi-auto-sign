@@ -1,0 +1,20 @@
+name: "每日自动签到"
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 北京时间 10:00 UTC 2:00
+  workflow_dispatch:       # 也支持手动触发
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 执行签到
+        env:
+          LATVI_EMAIL: ${{ secrets.LATVI_EMAIL }}
+          LATVI_PASSWORD: ${{ secrets.LATVI_PASSWORD }}
+        run: python3 latvi_sign.py
