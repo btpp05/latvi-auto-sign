@@ -19,22 +19,21 @@ jobs:
           LATVI_EMAIL: ${{ secrets.LATVI_EMAIL }}
           LATVI_PASSWORD: ${{ secrets.LATVI_PASSWORD }}
         run: |
-          result=$(python3 latvi_sign.py)
-          echo "$result"
-          # 保存为 step output，传给下一步
-          EOF=$(dd if=/dev/urandom bs=64 count=1 2>/dev/null | base64 | tr -d '\n')
-          echo "result<<$EOF" >> $GITHUB_OUTPUT
-          echo "$result" >> $GITHUB_OUTPUT
-          echo "$EOF" >> $GITHUB_OUTPUT
+          python3 latvi_sign.py 2>&1 | tee /tmp/sign_result.txt
       - name: 发送 Telegram 通知
         if: always()
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: "644320820"
         run: |
-          MSG="${{ steps.sign.outputs.result }}"
+          # 去掉 ANSI 颜色码后存为 JSON payload
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/sign_result.txt | grep -v '^\s*$' \
+            | python3 -c "
+import json, sys
+text = sys.stdin.read().strip()
+print(json.dumps({'chat_id': '644320820', 'text': text}))
+" > /tmp/tg_payload.json
+          # 发送到 Telegram
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "text=${MSG}" \
-            -d "parse_mode=Markdown" > /dev/null
-        shell: bash
+            -H "Content-Type: application/json" \
+            -d @/tmp/tg_payload.json
+          echo ""
