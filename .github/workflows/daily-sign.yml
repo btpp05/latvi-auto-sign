@@ -14,7 +14,27 @@ jobs:
         with:
           python-version: "3.11"
       - name: 执行签到
+        id: sign
         env:
           LATVI_EMAIL: ${{ secrets.LATVI_EMAIL }}
           LATVI_PASSWORD: ${{ secrets.LATVI_PASSWORD }}
-        run: python3 latvi_sign.py
+        run: |
+          result=$(python3 latvi_sign.py)
+          echo "$result"
+          # 保存为 step output，传给下一步
+          EOF=$(dd if=/dev/urandom bs=64 count=1 2>/dev/null | base64 | tr -d '\n')
+          echo "result<<$EOF" >> $GITHUB_OUTPUT
+          echo "$result" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+      - name: 发送 Telegram 通知
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: "644320820"
+        run: |
+          MSG="${{ steps.sign.outputs.result }}"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            -d "text=${MSG}" \
+            -d "parse_mode=Markdown" > /dev/null
+        shell: bash
