@@ -1,7 +1,5 @@
 name: "自动签到"
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -25,6 +23,5 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          # 去掉 ANSI 颜色码后调用通知脚本
           sed 's/\x1b\[[0-9;]*m//g' /tmp/sign_result.txt > /tmp/sign_clean.txt
           python3 tg_notify.py
