@@ -4,6 +4,7 @@ on:
     branches: [main]
   schedule:
     - cron: "0 2 * * *"
+  workflow_dispatch:
 
 jobs:
   sign:
@@ -14,7 +15,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: 执行签到
-        id: sign
         env:
           LATVI_EMAIL: ${{ secrets.LATVI_EMAIL }}
           LATVI_PASSWORD: ${{ secrets.LATVI_PASSWORD }}
@@ -25,16 +25,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          # 去掉 ANSI 颜色码，生成 JSON payload
-          sed 's/\x1b\[[0-9;]*m//g' /tmp/sign_result.txt \
-            | grep -v '^\s*$' \
-            | python3 -c "
-import json, sys
-text = sys.stdin.read().strip()
-print(json.dumps({'chat_id': '644820320', 'text': text}))
-" > /tmp/tg_payload.json
-          # 发送到 Telegram
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/tg_payload.json
-          echo ""
+          # 去掉 ANSI 颜色码后调用通知脚本
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/sign_result.txt > /tmp/sign_clean.txt
+          python3 tg_notify.py
