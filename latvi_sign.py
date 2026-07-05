@@ -238,6 +238,7 @@ def main():
     log(f"💰 当前余额: {credits} Credits")
     log("=" * 40)
     log("完成!")
+    log("🔗 https://github.com/btpp05/latvi-auto-sign")
 
 
 if __name__ == "__main__":
