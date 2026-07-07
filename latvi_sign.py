@@ -183,7 +183,16 @@ def check_status(opener):
         html = http_get(opener, f"{BASE_URL}/daily-rewards")
         
         if "On Cooldown" in html:
-            log("⏳ 今日已签到（冷却中）")
+            # 尝试提取冷却剩余时间
+            time_match = re.search(r'available\s+in\s+([^<.]+)', html, re.IGNORECASE)
+            if not time_match:
+                time_match = re.search(r'cooldown[^<]*?(\d+[:\s]*\d+[:\s]*\d+)', html, re.IGNORECASE)
+            if not time_match:
+                time_match = re.search(r'(\d+)\s*(hour|hr|minute|min)', html, re.IGNORECASE)
+            if time_match:
+                log(f"⏳ 今日已签到（冷却中，下次可领: {time_match.group(1).strip()})")
+            else:
+                log("⏳ 今日已签到（冷却中）")
             return "claimed"
         elif "Claim Reward" in html or "claim" in html.lower():
             log("🎯 今日尚未签到，可以领取")
@@ -200,7 +209,6 @@ def get_credits(opener):
     """获取当前余额"""
     try:
         html = http_get(opener, f"{BASE_URL}/home")
-        # 从用户下拉菜单找余额
         match = re.search(r'id="userDropdown"[^>]*>([^<]*)', html)
         if match:
             val = match.group(1).strip()
@@ -215,15 +223,22 @@ def get_credits(opener):
     return "?"
 
 def list_servers(opener):
-    """列出正在运行的服务器（如果这个页面存在的话）"""
-    try:
-        html = http_get(opener, f"{BASE_URL}/home")
-        # 尝试找服务器列表
-        servers = re.findall(r'class="server[^"]*"[^>]*>([^<]+)', html, re.IGNORECASE)
-        if servers:
-            log(f"🖥️ 运行中的服务器: {', '.join(s.strip() for s in servers)}")
-    except:
-        pass
+    """列出正在运行的服务器"""
+    # 尝试几个常见的服务器管理路径
+    for path in ["/home", "/servers", "/products", "/services"]:
+        try:
+            html = http_get(opener, f"{BASE_URL}{path}")
+            servers = re.findall(r'class="server[^"]*"[^>]*>([^<]+)', html, re.IGNORECASE)
+            if servers:
+                log(f"🖥️ 运行中的服务器: {', '.join(s.strip() for s in servers)}")
+                return
+            # 尝试找任何带状态标签的卡片/表格
+            nodes = re.findall(r'(?:running|active|online|启动)[^<]*', html, re.IGNORECASE)
+            if nodes:
+                log(f"⚠️ 发现活跃资源（可能在吃分），建议登录 Latvi 后台检查")
+                return
+        except:
+            pass
 
 
 def main():
