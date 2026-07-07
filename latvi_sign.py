@@ -151,6 +151,10 @@ def claim_daily(opener, csrf_token):
         
         if data.get("success"):
             log(f"✅ 签到成功！{data.get('message', '')}")
+            # 打印完整的奖励信息，便于排查
+            reward_info = {k: v for k, v in data.items() if k != "success"}
+            if reward_info:
+                log(f"📊 签到详情: {json.dumps(reward_info, ensure_ascii=False)}")
             return True
         else:
             error = data.get("error", data.get("message", "未知错误"))
@@ -193,7 +197,7 @@ def check_status(opener):
 
 
 def get_credits(opener):
-    """尝试获取当前余额"""
+    """获取当前余额"""
     try:
         html = http_get(opener, f"{BASE_URL}/home")
         # 从用户下拉菜单找余额
@@ -202,7 +206,6 @@ def get_credits(opener):
             val = match.group(1).strip()
             if val:
                 return val
-        # 备选方式
         for pattern in [r'([\d,]+\.?\d*)\s*Credits', r'>([\d,.]+)\s*<', r'credits[^d]+([\d,.]+)']:
             m = re.search(pattern, html, re.IGNORECASE)
             if m:
@@ -210,6 +213,17 @@ def get_credits(opener):
     except:
         pass
     return "?"
+
+def list_servers(opener):
+    """列出正在运行的服务器（如果这个页面存在的话）"""
+    try:
+        html = http_get(opener, f"{BASE_URL}/home")
+        # 尝试找服务器列表
+        servers = re.findall(r'class="server[^"]*"[^>]*>([^<]+)', html, re.IGNORECASE)
+        if servers:
+            log(f"🖥️ 运行中的服务器: {', '.join(s.strip() for s in servers)}")
+    except:
+        pass
 
 
 def main():
@@ -236,6 +250,7 @@ def main():
     
     credits = get_credits(opener)
     log(f"💰 当前余额: {credits} Credits")
+    list_servers(opener)
     log("=" * 40)
     log("完成!")
     log("🔗 https://github.com/btpp05/latvi-auto-sign")
