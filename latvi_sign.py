@@ -72,11 +72,11 @@ def http_post(opener, url, data, extra_headers=None, json_body=False):
         body = urllib.parse.urlencode(data).encode("utf-8")
         req = urllib.request.Request(url, data=body)
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    
+
     if extra_headers:
         for k, v in extra_headers.items():
             req.add_header(k, v)
-    
+
     return opener.open(req, timeout=20).read().decode("utf-8")
 
 
@@ -91,21 +91,21 @@ def get_csrf_token(html):
 def login(opener, cj):
     """登录并获取 session / CSRF token"""
     log(f"正在登录: {EMAIL}")
-    
+
     # 1. 获取登录页，拿 CSRF token
     try:
         html = http_get(opener, f"{BASE_URL}/login")
     except Exception as e:
         log(f"❌ 无法访问登录页: {e}")
         return None
-    
+
     csrf = get_csrf_token(html)
     if not csrf:
         log("❌ 无法获取 CSRF token")
         return None
-    
+
     log(f"  CSRF token: {csrf[:20]}...")
-    
+
     # 2. 提交登录
     try:
         resp_html = http_post(opener, f"{BASE_URL}/login", {
@@ -123,10 +123,11 @@ def login(opener, cj):
     except Exception as e:
         log(f"❌ 登录异常: {e}")
         return None
-    
+
     # 检查是否登录成功
     if "logout" in resp_html.lower() or "btpp04" in resp_html or "Daily Rewards" in resp_html:
         log("✅ 登录成功")
+        # 用登录后页面（如 /home）返回的 CSRF 才对 claim 有效
         new_csrf = get_csrf_token(resp_html)
         return new_csrf or csrf
     else:
@@ -135,9 +136,9 @@ def login(opener, cj):
 
 
 def claim_daily(opener, csrf_token):
-    """领取每日签到奖励"""
+    """领取每日签到奖励。返回 (ok: bool, already_claimed: bool, info: dict)"""
     log("正在领取每日奖励...")
-    
+
     try:
         body = json.dumps({}).encode("utf-8")
         req = urllib.request.Request(f"{BASE_URL}/daily-rewards/claim", data=body)
@@ -145,126 +146,120 @@ def claim_daily(opener, csrf_token):
         req.add_header("Accept", "application/json")
         req.add_header("X-CSRF-TOKEN", csrf_token)
         req.add_header("X-Requested-With", "XMLHttpRequest")
-        
+
         resp = opener.open(req, timeout=20)
         data = json.loads(resp.read().decode("utf-8"))
-        
+
         if data.get("success"):
-            log(f"✅ 签到成功！{data.get('message', '')}")
-            # 打印完整的奖励信息，便于排查
-            reward_info = {k: v for k, v in data.items() if k != "success"}
-            if reward_info:
-                log(f"📊 签到详情: {json.dumps(reward_info, ensure_ascii=False)}")
-            return True
+            # 余额以 API 返回的 new_balance 为准（最可靠）
+            reward = data.get("reward", 0)
+            try:
+                # API 返回 reward 单位为千分之一 Credit（如 5000 -> 5.00）
+                reward_credits = reward / 1000 if reward > 100 else reward
+                reward_str = f"{reward_credits:.2f}"
+            except Exception:
+                reward_str = str(reward)
+            new_balance = data.get("new_balance", "?")
+            streak = data.get("new_streak", "?")
+            log(f"✅ 签到成功！+{reward_str} Credits（连续签到 {streak} 天）")
+            log(f"💰 领取后余额: {new_balance} Credits")
+            return True, False, data
         else:
             error = data.get("error", data.get("message", "未知错误"))
             log(f"⚠️ 签到失败: {error}")
-            return False
-            
+            return False, False, data
+
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
         try:
             data = json.loads(body)
-            error = data.get("error", data.get("message", str(e)))
-            log(f"⚠️ {error}")
-        except:
-            log(f"❌ HTTP {e.code}: {body[:200]}")
-        return False
+        except Exception:
+            data = {}
+        if e.code == 429:
+            # 今日已领取过 -> 明确提示，不要假装成功
+            msg = data.get("error", data.get("message", "今日已领取"))
+            next_t = data.get("next_claim_time", "")
+            log(f"ℹ️ 今日已签到（奖励已于更早时领取，无需重复）")
+            if next_t:
+                log(f"   下次可领: {next_t}")
+            return False, True, data
+        error = data.get("error", data.get("message", str(e)))
+        log(f"⚠️ {error}")
+        return False, False, data
     except Exception as e:
         log(f"❌ 请求异常: {e}")
-        return False
-
-
-def check_status(opener):
-    """查看今日签到状态"""
-    log("检查签到状态...")
-    
-    try:
-        html = http_get(opener, f"{BASE_URL}/daily-rewards")
-        
-        if "On Cooldown" in html:
-            # 尝试提取冷却剩余时间
-            time_match = re.search(r'available\s+in\s+([^<.]+)', html, re.IGNORECASE)
-            if not time_match:
-                time_match = re.search(r'cooldown[^<]*?(\d+[:\s]*\d+[:\s]*\d+)', html, re.IGNORECASE)
-            if not time_match:
-                time_match = re.search(r'(\d+)\s*(hour|hr|minute|min)', html, re.IGNORECASE)
-            if time_match:
-                log(f"⏳ 今日已签到（冷却中，下次可领: {time_match.group(1).strip()})")
-            else:
-                log("⏳ 今日已签到（冷却中）")
-            return "claimed"
-        elif "Claim Reward" in html or "claim" in html.lower():
-            log("🎯 今日尚未签到，可以领取")
-            return "ready"
-        else:
-            log("❓ 无法确定签到状态")
-            return "unknown"
-    except Exception as e:
-        log(f"❌ 检查状态失败: {e}")
-        return "unknown"
+        return False, False, {}
 
 
 def get_credits(opener):
-    """获取当前余额"""
+    """获取当前余额（精确匹配 Credits 卡片里的数字，避免误取服务器数）"""
     try:
         html = http_get(opener, f"{BASE_URL}/home")
-        match = re.search(r'id="userDropdown"[^>]*>([^<]*)', html)
-        if match:
-            val = match.group(1).strip()
-            if val:
-                return val
-        for pattern in [r'([\d,]+\.?\d*)\s*Credits', r'>([\d,.]+)\s*<', r'credits[^d]+([\d,.]+)']:
-            m = re.search(pattern, html, re.IGNORECASE)
-            if m:
-                return m.group(1)
-    except:
+        # 首页余额卡片结构:
+        #   <span class="info-box-text">Credits</span>
+        #   <span class="info-box-number">15.00</span>
+        m = re.search(r'info-box-text">Credits</span>\s*<span class="info-box-number">([\d,.]+)',
+                      html, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        # 备用：<small>...</small>15.00
+        m = re.search(r'fa-coins[^>]*></i></small>\s*([\d,.]+)', html)
+        if m:
+            return m.group(1)
+    except Exception:
         pass
     return "?"
 
+
 def list_servers(opener):
-    """列出正在运行的服务器"""
-    # 尝试几个常见的服务器管理路径
-    for path in ["/home", "/servers", "/products", "/services"]:
-        try:
-            html = http_get(opener, f"{BASE_URL}{path}")
-            servers = re.findall(r'class="server[^"]*"[^>]*>([^<]+)', html, re.IGNORECASE)
-            if servers:
-                log(f"🖥️ 运行中的服务器: {', '.join(s.strip() for s in servers)}")
-                return
-            # 尝试找任何带状态标签的卡片/表格
-            nodes = re.findall(r'(?:running|active|online|启动)[^<]*', html, re.IGNORECASE)
-            if nodes:
-                log(f"⚠️ 发现活跃资源（可能在吃分），建议登录 Latvi 后台检查")
-                return
-        except:
-            pass
+    """列出正在运行且会消耗积分的服务器（仅提醒付费实例）"""
+    try:
+        html = http_get(opener, f"{BASE_URL}/servers")
+    except Exception:
+        return
+    # 只警告真正在扣积分的实例：卡片里同时出现 "per Day" 且价格 > 0
+    cards = re.findall(r'class="[^"]*server[^"]*"[^>]*>.*?</div>', html, re.S | re.I)
+    warned = False
+    for c in cards:
+        if "per Day" in c and "No credits" not in c and "Free" not in c:
+            price = re.search(r'([\d.]+)\s*per Day', c, re.I)
+            if price and float(price.group(1)) > 0:
+                if not warned:
+                    log("⚠️ 发现按天扣分的实例，可能抵消签到奖励：")
+                    warned = True
+                name = re.search(r'([A-Za-z0-9_\- ]+?)\s*\(', c)
+                log(f"   🖥️ {name.group(1).strip() if name else '实例'} — {price.group(1)}/天")
+    if not warned:
+        log("✅ 无按天扣分的实例（免费服务器不消耗积分）")
 
 
 def main():
     log("=" * 40)
     log("Latvi.space 自动签到")
     log("=" * 40)
-    
+
     opener, cj = build_opener()
-    
+
     csrf = login(opener, cj)
     if not csrf:
         sys.exit(1)
-    
-    status = check_status(opener)
-    
-    if status == "ready":
-        claim_daily(opener, csrf)
-    elif status == "claimed":
-        log("✅ 今天已经签到了，无需重复操作")
+
+    # 直接尝试领取：成功就加积分；429 表示今天已领过（不算失败）
+    ok, already, info = claim_daily(opener, csrf)
+
+    if not ok and not already:
+        # 真正失败（网络/凭证/服务器错误），非“已领取”
+        credits = get_credits(opener)
+        log(f"💰 当前余额: {credits} Credits")
+        sys.exit(1)
+
+    # 余额优先用 API 返回，否则抓取页面
+    if ok and info.get("new_balance"):
+        balance = info.get("new_balance")
     else:
-        # 不确定状态，直接尝试
-        log("尝试直接签到...")
-        claim_daily(opener, csrf)
-    
-    credits = get_credits(opener)
-    log(f"💰 当前余额: {credits} Credits")
+        balance = get_credits(opener)
+    log(f"💰 当前余额: {balance} Credits")
+
     list_servers(opener)
     log("=" * 40)
     log("完成!")
